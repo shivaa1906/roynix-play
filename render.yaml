@@ -1,0 +1,43 @@
+services:
+  - type: web
+    name: music-bot
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node index.js
+    healthCheckPath: /
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: PREFIX
+        value: "!"
+      - key: DEVELOPER_IDS
+        sync: false
+      - key: EMBED_COLOR
+        value: "#0061ff"
+      - key: LAVALINK_HOST
+        fromService:
+          type: web
+          name: lavalink
+          property: host
+      - key: LAVALINK_PASSWORD
+        sync: false
+      - key: LAVALINK_PORT
+        value: 2333
+      - key: LAVALINK_SECURE
+        value: "false"
+      - key: LAVALINK_NAME
+        value: "Main Node"
+      - key: PORT
+        value: 10000
+
+  - type: web
+    name: lavalink
+    runtime: docker
+    plan: free
+    dockerfilePath: ./lavalink/Dockerfile
+    envVars:
+      - key: LAVALINK_SERVER_PASSWORD
+        sync: false
+      - key: SERVER_PORT
+        value: 2333
