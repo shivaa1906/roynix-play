@@ -191,7 +191,7 @@ client.on("error", (error) => {
     }
 });
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
     reconnectAttempts = 0;
     reconnectDelay = config.reconnect.initialDelay; // Reset delay on successful connection
     await client.riffy.init(client.user.id);
