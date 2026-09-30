@@ -281,14 +281,16 @@ client.on("messageCreate", async (message) => {
                     requester: message.author,
                 });
 
-                const { loadType, tracks, playlistInfo } = resolve;
+                const isSessionActive = Boolean(player.playing || player.paused || player.queue?.current);
 
                 if (loadType === "playlist") {
                     for (const track of tracks) {
                         track.info.requester = message.author;
                         player.queue.add(track);
                     }
-                    messages.addedPlaylist(message.channel, playlistInfo, tracks);
+                    if (isSessionActive) {
+                        messages.addedPlaylist(message.channel, playlistInfo, player.queue, message.author);
+                    }
                     if (!player.playing && !player.paused) player.play();
                 } else if (loadType === "search" || loadType === "track") {
                     const track = tracks.shift();
@@ -296,7 +298,9 @@ client.on("messageCreate", async (message) => {
                     const position = player.queue.length + 1;
                     player.queue.add(track);
 
-                    messages.addedToQueue(message.channel, track, position);
+                    if (isSessionActive) {
+                        messages.addedToQueue(message.channel, track, position, player.queue, message.author);
+                    }
                     if (!player.playing && !player.paused) player.play();
                 } else {
                     messages.error(message.channel, "No results found! Try a different search.");

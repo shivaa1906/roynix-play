@@ -1,6 +1,8 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ContainerBuilder, MediaGalleryBuilder, MediaGalleryItemBuilder, TextDisplayBuilder, SeparatorBuilder, SeparatorSpacingSize } = require('discord.js');
 const emojis = require('../emojis.js');
 const config = require('../config.js');
+
+const lastQueueMessages = new Map();
 
 function formatDuration(ms) {
     if (!ms || ms <= 0 || ms === 'Infinity') return 'LIVE';
@@ -85,7 +87,50 @@ function createExtraButtons() {
     return row;
 }
 
+function buildQueueAddedContainer(tracks, requester) {
+    const list = Array.isArray(tracks) ? tracks : [tracks];
+    const visibleTracks = list.slice(0, 4);
+    const container = new ContainerBuilder();
+    const galleryItems = visibleTracks
+        .map((track) => {
+            const artwork = track?.info?.thumbnail || track?.info?.artworkUrl || track?.info?.image;
+            return artwork
+                ? new MediaGalleryItemBuilder()
+                    .setURL(artwork)
+                    .setDescription((track?.info?.title || 'Queued song artwork').slice(0, 100))
+                : null;
+        })
+        .filter(item => item !== null);
+
+    if (galleryItems.length > 0) {
+        container.addMediaGalleryComponents(new MediaGalleryBuilder().addItems(galleryItems));
+    }
+
+    const songLines = visibleTracks.map((track, index) => {
+        const title = track?.info?.title || 'Unknown Track';
+        const uri = track?.info?.uri || '';
+        const song = uri ? `[${title}](${uri})` : title;
+        return `**#${index + 2}** ${song}`;
+    });
+
+    const requesterText = requester ? `<@${requester.id || requester}>` : 'Unknown';
+    const remainingCount = list.length - visibleTracks.length;
+    const songListText = songLines.join('\n') || 'No tracks in queue.';
+    const displayText = remainingCount > 0
+        ? `${songListText}\n\n*...and ${remainingCount} more track${remainingCount > 1 ? 's' : ''} in queue.*`
+        : songListText;
+
+    container
+        .addTextDisplayComponents(new TextDisplayBuilder().setContent(displayText))
+        .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
+        .addTextDisplayComponents(new TextDisplayBuilder().setContent(`*Requested by: ${requesterText}*`));
+
+    return container;
+}
+
 module.exports = {
+    buildQueueAddedContainer,
+
     success: (channel, message) => {
         const embed = new EmbedBuilder()
             .setColor(config.embedColor)
@@ -119,7 +164,7 @@ module.exports = {
             .addFields([
                 { name: 'Artist', value: `${emojis.info} ${track.info.author}`, inline: true },
                 { name: 'Duration', value: `${emojis.time} ${getDurationString(track)}`, inline: true },
-                { name: 'Requested By', value: `${emojis.info} ${track.info.requester.tag}`, inline: true }
+                { name: 'Requested By', value: `${emojis.info} ${track.info.requester?.tag || track.info.requester}`, inline: true }
             ])
             .setFooter({ text: '✨ Premium Music Experience' });
 
@@ -131,36 +176,43 @@ module.exports = {
         return channel.send({ embeds: [embed], components: buttons });
     },
 
-    addedToQueue: (channel, track, position) => {
-        const embed = new EmbedBuilder()
-            .setColor(config.embedColor)
-            .setAuthor({ name: '✨ Track Added to Queue' })
-            .setDescription(`${emojis.success} Added: [${track.info.title}](${track.info.uri})`)
-            .setThumbnail(track.info.thumbnail || 'https://i.imgur.com/n7uBEvU.png')
-            .addFields([
-                { name: 'Artist', value: `${emojis.info} ${track.info.author}`, inline: true },
-                { name: 'Duration', value: `${emojis.time} ${getDurationString(track)}`, inline: true },
-                { name: 'Position', value: `${emojis.queue} #${position}`, inline: true }
-            ])
-            .setFooter({ text: '✨ Premium Music Experience' });
-
-        return channel.send({ embeds: [embed] });
+    addedToQueue: async (channel, track, position, queue, requester) => {
+        const tracksToUse = (queue && queue.length > 0) ? [...queue] : [track];
+        const container = buildQueueAddedContainer(tracksToUse, requester || track.info?.requester);
+        const oldMsgId = lastQueueMessages.get(channel.guild?.id);
+        if (oldMsgId) {
+            try {
+                const oldMsg = await channel.messages.fetch(oldMsgId).catch(() => null);
+                if (oldMsg) await oldMsg.delete().catch(() => {});
+            } catch (_) {}
+        }
+        const sent = await channel.send({
+            components: [container],
+            flags: ['IsComponentsV2']
+        });
+        if (channel.guild?.id && sent) {
+            lastQueueMessages.set(channel.guild.id, sent.id);
+        }
+        return sent;
     },
 
-    addedPlaylist: (channel, playlistInfo, tracks) => {
-        const embed = new EmbedBuilder()
-            .setColor(config.embedColor)
-            .setTitle(`${emojis.success} Added Playlist`)
-            .setDescription(`**${playlistInfo.name}**`)
-            .setThumbnail(playlistInfo.thumbnail || 'https://i.imgur.com/0JhhPo3.png')
-            .addFields([
-                { name: 'Total Tracks', value: `${emojis.queue} ${tracks.length} tracks`, inline: true },
-                { name: 'Total Duration', value: `${emojis.time} ${formatDuration(tracks.reduce((acc, track) => acc + (track.info.duration || 0), 0))}`, inline: true },
-                { name: 'Stream Count', value: `${emojis.info} ${tracks.filter(t => t.info.isStream).length} streams`, inline: true }
-            ])
-            .setFooter({ text: '✨ Premium Music Experience • Playlist will start playing soon' });
-
-        return channel.send({ embeds: [embed] });
+    addedPlaylist: async (channel, playlistInfo, tracks, requester) => {
+        const container = buildQueueAddedContainer(tracks, requester);
+        const oldMsgId = lastQueueMessages.get(channel.guild?.id);
+        if (oldMsgId) {
+            try {
+                const oldMsg = await channel.messages.fetch(oldMsgId).catch(() => null);
+                if (oldMsg) await oldMsg.delete().catch(() => {});
+            } catch (_) {}
+        }
+        const sent = await channel.send({
+            components: [container],
+            flags: ['IsComponentsV2']
+        });
+        if (channel.guild?.id && sent) {
+            lastQueueMessages.set(channel.guild.id, sent.id);
+        }
+        return sent;
     },
 
     queueEnded: (channel) => {
